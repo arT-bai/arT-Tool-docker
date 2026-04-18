@@ -1,0 +1,12 @@
+services:
+  art-tool:
+    image: ghcr.io/art-bai/art-tool-docker:latest
+    container_name: art-tool-docker
+    ports:
+      - "2000:2000"
+    volumes:
+      - art-tool-storage:/app/storage
+    restart: unless-stopped
+
+volumes:
+  art-tool-storage:
