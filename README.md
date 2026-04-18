@@ -1,20 +1,67 @@
-# arT-Tool-docker
+﻿# arT-Tool-docker
 
-使用预构建镜像运行 [CleanSheet Web](https://github.com/arT-bai/CleanSheetWeb)（Rust Web 服务），**无需本地编译**。
+> 一个基于 Rust 的轻量数据清洗 Web 应用：上传表格、预览数据、按字段清洗前 N 行，并导出新的 `.xlsx` 文件。
 
-## 镜像
+## 目录
 
-托管在 GitHub Container Registry。Docker 要求镜像路径为小写，实际拉取地址为：
+- [项目简介](#项目简介)
+- [功能亮点](#功能亮点)
+- [技术栈](#技术栈)
+- [快速开始](#快速开始)
+- [Docker 与离线部署](#docker-与离线部署)
+- [核心接口](#核心接口)
+- [API 示例](#api-示例)
+- [项目结构](#项目结构)
+- [安全与边界](#安全与边界)
+- [清理机制](#清理机制)
+- [测试建议](#测试建议)
+- [后续规划](#后续规划)
 
-`ghcr.io/art-bai/art-tool-docker`
+## 项目简介
 
-（与 GitHub 上的 `arT-bai/arT-Tool-docker` 仓库对应。）
+CleanSheet Web 面向“表格数据快速清洗”场景，提供一个开箱即用的 Web 页面：
 
-## 前置条件
+- 上传 `csv/xls/xlsx`
+- 解析并预览表头与样本行
+- 输入多个字段名进行匹配
+- 指定前 N 行执行清洗
+- 生成并下载 `.xlsx` 清洗结果
 
-- 已安装 [Docker](https://docs.docker.com/get-docker/) 与 [Docker Compose](https://docs.docker.com/compose/install/)（Compose V2：`docker compose`）。
+适合内部工具、小团队数据处理和离线内网部署场景。
 
-## 快速启动
+## 功能亮点
+
+- 支持多格式导入：`csv` / `xls` / `xlsx`
+- 预览体验友好：展示表头、总行数与前 10 行数据
+- 字段匹配可视化：区分 `matched_fields` 与 `unmatched_fields`
+- 可控清洗范围：仅处理前 N 行，避免误操作全量数据
+- 导出稳定：统一导出为 `.xlsx`
+- 错误处理完善：页面接口与下载接口均返回合理错误信息
+- 基础安全防护：上传白名单、文件名校验、请求体大小限制
+- 自动过期清理：上传文件、导出文件与任务元数据定期回收
+
+## 技术栈
+
+- **语言与运行时**: Rust 2021, Tokio
+- **Web 框架**: Axum
+- **页面渲染**: Askama + Vanilla JS(Fetch) + Pico CSS
+- **文件处理**: `csv`, `calamine`, `rust_xlsxwriter`
+- **日志与可观测性**: `tracing`, `tracing-subscriber`
+
+## 快速开始
+
+### 1) 环境准备
+
+确保已安装 Docker（建议 Docker Desktop，含 Compose V2）：
+
+```bash
+docker --version
+docker compose version
+```
+
+### 2) 启动方式
+
+方式 A：使用本仓库 Compose（推荐）
 
 ```bash
 git clone https://github.com/arT-bai/arT-Tool-docker.git
@@ -22,38 +69,7 @@ cd arT-Tool-docker
 docker compose up -d
 ```
 
-浏览器访问：<http://localhost:2000>
-
-## 使用说明
-
-### Web 访问
-
-- 首页：`http://localhost:2000/`
-- 健康检查：`http://localhost:2000/health`
-
-### API 路由
-
-- `POST /preview`：预览清洗结果（不落盘最终文件）
-- `POST /clean`：执行清洗并生成可下载结果
-- `GET /download/:job_id`：下载生成文件
-
-### 常见运维命令
-
-```bash
-# 查看运行状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f
-
-# 停止服务
-docker compose down
-
-# 停止并清理数据卷（谨慎）
-docker compose down -v
-```
-
-## 仅使用 Docker（不克隆本仓库）
+方式 B：仅 Docker 命令（不克隆仓库）
 
 ```bash
 docker pull ghcr.io/art-bai/art-tool-docker:latest
@@ -63,59 +79,155 @@ docker run -d --name art-tool-docker -p 2000:2000 \
   ghcr.io/art-bai/art-tool-docker:latest
 ```
 
-## 数据持久化
+启动后访问：<http://localhost:2000>
 
-默认 Compose 使用命名卷 `art-tool-storage`，挂载到容器内 `/app/storage`（上传与输出目录）。
+## Docker 与离线部署
 
-若需将数据放在本机目录，可改为：
+### 本地 Docker 运行
 
-```yaml
-volumes:
-  - ./storage:/app/storage
+```bash
+docker pull ghcr.io/art-bai/art-tool-docker:latest
+docker run --rm -p 2000:2000 ghcr.io/art-bai/art-tool-docker:latest
 ```
 
-## 项目框架
+或使用 Compose：
 
-当前服务基于 Rust + Axum，运行时核心目录如下（对应 [CleanSheetWeb](https://github.com/arT-bai/CleanSheetWeb) 源码）：
+```bash
+docker compose up -d
+```
+
+### 离线内网部署
+
+可在联网机器先拉取镜像并导出：
+
+```bash
+docker pull ghcr.io/art-bai/art-tool-docker:latest
+docker save -o art-tool-docker-latest.tar ghcr.io/art-bai/art-tool-docker:latest
+```
+
+在内网机器导入并运行：
+
+```bash
+docker load -i art-tool-docker-latest.tar
+docker run --rm -p 2000:2000 ghcr.io/art-bai/art-tool-docker:latest
+```
+
+## 核心接口
+
+- `GET /`：首页
+- `POST /preview`：上传并预览
+- `POST /clean`：执行清洗并导出
+- `GET /download/:job_id`：下载结果文件
+
+## API 示例
+
+### `POST /preview`
+
+- Content-Type: `multipart/form-data`
+- 字段说明：
+  - `file`: 上传文件（`.csv/.xls/.xlsx`）
+  - `field_names`: 逗号分隔字段（例如 `Phone,Email`）
+  - `row_limit`: 正整数（例如 `1000`）
+
+成功响应示例：
+
+```json
+{
+  "upload_token": "xxx",
+  "original_filename": "demo.xlsx",
+  "selected_fields": ["Phone", "Email"],
+  "matched_fields": ["Phone", "Email"],
+  "unmatched_fields": [],
+  "row_limit": 1000,
+  "total_rows": 1280,
+  "headers": ["ID", "Name", "Phone", "Email"],
+  "rows": [["1", "Tom", " 123 ", " a@b.com "]]
+}
+```
+
+### `POST /clean`
+
+- Content-Type: `application/json`
+
+请求体示例：
+
+```json
+{
+  "upload_token": "xxx",
+  "field_names": ["Phone", "Email"],
+  "row_limit": 1000
+}
+```
+
+成功响应示例：
+
+```json
+{
+  "output_filename": "demo_cleaned_20260418_123456.xlsx",
+  "processed_rows": 1000,
+  "matched_fields": ["Phone", "Email"],
+  "download_link": "/download/xxx"
+}
+```
+
+## 项目结构
 
 ```text
 CleanSheetWeb/
-├─ src/
-│  ├─ main.rs             # 应用入口：启动 HTTP 服务、初始化日志与定时清理任务
-│  ├─ config.rs           # AppConfig 默认配置（端口、上传目录、TTL 等）
-│  ├─ state.rs            # 全局共享状态（配置 + JobStore）
-│  ├─ routes/             # 路由注册（/clean /preview /download/:job_id）
-│  ├─ handlers/           # HTTP 处理器（参数解析、响应组装）
-│  ├─ services/           # 业务逻辑（加载、匹配、清洗、导出、任务存储）
-│  ├─ domain/             # 领域模型与 DTO
-│  └─ utils/              # 文件与文本辅助工具
-├─ templates/             # Askama HTML 模板
-├─ assets/                # 静态资源（前端样式/脚本）
-├─ storage/               # 运行期数据目录（uploads / outputs）
-├─ Dockerfile             # 多阶段构建镜像
-└─ docker-compose.yml     # 本地/服务器启动编排
+├── src/
+│   ├── handlers/      # HTTP 处理层（编排请求/响应）
+│   ├── routes/        # 路由注册
+│   ├── services/      # 核心业务（loader/matcher/cleaner/exporter/job_store）
+│   ├── domain/        # 领域模型与 DTO
+│   ├── utils/         # 工具函数（文本解析、文件保存）
+│   ├── config.rs
+│   ├── error.rs
+│   ├── main.rs
+│   └── state.rs
+├── templates/         # Askama 模板与 partials
+├── assets/            # 静态资源（CSS / 图片）
+├── storage/
+│   ├── uploads/
+│   └── outputs/
+├── scripts/
+│   └── run-dev.sh
+├── docs/
+│   ├── codebook.md
+│   └── docker-offline-deploy.md
 ```
 
-### 运行机制（简述）
+## 安全与边界
 
-- 容器启动后监听 `0.0.0.0:2000`。
-- 上传文件与清洗结果写入 `/app/storage`（通过卷映射持久化）。
-- 服务包含周期性清理任务，会移除过期作业与历史文件。
+- 上传扩展名白名单：仅允许 `.csv/.xls/.xlsx`
+- 文件名安全校验：拒绝空文件名与目录穿越字符
+- 请求体大小限制：`max_upload_mb`（见 `src/config.rs`）
+- 错误处理策略：
+  - 页面接口返回 JSON（如 `{ "message": "..." }`）
+  - 下载接口返回语义化状态码（如 `404`）
 
-## 镜像构建说明
+## 清理机制
 
-镜像由源码仓库 CI 构建并推送，见 [CleanSheetWeb · GitHub Actions](https://github.com/arT-bai/CleanSheetWeb/actions)（若该仓库已启用工作流）。
+- `JobStore` 保存上传与导出任务元数据（含过期时间）
+- 后台任务每 3 分钟执行一次：
+  - 清理过期上传/导出文件
+  - 清理过期任务记录
+- 清理入口：`cleanup_expired_jobs(...)`
 
-## 版本标签
+## 测试建议
 
-- `latest`：默认分支最新构建。
-- `v*`（如 `v0.1.0`）：对应 Git 标签的语义化版本。
-- `sha-xxxxxxx`：具体构建提交。
+建议按以下顺序手工验收：
 
-拉取指定版本示例：
+1. 上传 CSV，验证预览和字段匹配
+2. 上传 XLSX，验证预览和字段匹配
+3. 设置字段 + `row_limit` 后执行清洗
+4. 下载生成文件，确认可正常打开
+5. 验证仅命中字段且仅前 N 行被清洗
+6. 使用无效扩展名/超大文件验证错误提示
+7. 调小 TTL 或等待过期，验证自动清理逻辑
 
-```bash
-docker pull ghcr.io/art-bai/art-tool-docker:v0.1.0
-```
+## 后续规划
 
-将 `docker-compose.yml` 中的 `image` 改为同一标签即可。
+- 下载鉴权与访问令牌签名
+- 更细粒度清洗规则配置
+- 后台异步任务与进度反馈
+- 历史任务列表与可观测性增强
